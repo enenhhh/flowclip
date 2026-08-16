@@ -1,0 +1,1148 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FlowClip - 多端剪贴板同步与文件传输</title>
+    <style>
+        @font-face {
+          font-family: 'Google Sans';
+          font-style: normal;
+          font-display: swap;
+          font-weight: 400;
+          src: url(https://cdn.jsdelivr.net/fontsource/fonts/google-sans@5.3.1/latin-400-normal.woff2) format('woff2');
+          unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+        }
+        @font-face {
+          font-family: 'Google Sans';
+          font-style: normal;
+          font-display: swap;
+          font-weight: 500;
+          src: url(https://cdn.jsdelivr.net/fontsource/fonts/google-sans@5.3.1/latin-500-normal.woff2) format('woff2');
+          unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+        }
+        @font-face {
+          font-family: 'Google Sans';
+          font-style: normal;
+          font-display: swap;
+          font-weight: 700;
+          src: url(https://cdn.jsdelivr.net/fontsource/fonts/google-sans@5.3.1/latin-700-normal.woff2) format('woff2');
+          unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+        }
+
+        :root {
+            --green: #059669;
+            --black: #111111;
+            --white: #FFFFFF;
+            --gray-100: #F5F5F5;
+            --gray-200: #E5E5E5;
+            --gray-400: #A3A3A3;
+            --gray-600: #525252;
+            --stroke: rgba(5, 150, 105, 0.35);
+        }
+
+        [data-theme="dark"] {
+            --black: #F5F5F5;
+            --white: #0A0A0A;
+            --gray-100: #1A1A1A;
+            --gray-200: #2A2A2A;
+            --gray-400: #737373;
+            --gray-600: #B0B0B0;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        html { scroll-behavior: smooth; }
+
+        body {
+            font-family: 'Google Sans', 'PingFang SC', 'Microsoft YaHei', -apple-system, sans-serif;
+            background: var(--white);
+            color: var(--black);
+            overflow-x: hidden;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .scroll-container {
+            height: 100vh;
+            overflow-y: scroll;
+            scroll-snap-type: y mandatory;
+        }
+
+        .page {
+            min-height: 100vh;
+            scroll-snap-align: start;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            padding: 80px 8vw;
+            position: relative;
+            overflow: hidden;
+        }
+
+        /* 顶部小标签 */
+        .eyebrow {
+            font-size: 15px;
+            color: var(--gray-600);
+            letter-spacing: 1px;
+            margin-bottom: 32px;
+        }
+
+        .eyebrow .dot { margin: 0 12px; }
+
+        /* 大标题 */
+        .big-title {
+            font-size: clamp(48px, 7vw, 96px);
+            font-weight: 700;
+            line-height: 1.15;
+            letter-spacing: -2px;
+        }
+
+        .big-title .hl { color: var(--green); }
+
+        /* 超大描边装饰字 */
+        .stroke-word {
+            position: absolute;
+            font-size: clamp(100px, 18vw, 260px);
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            color: rgba(5, 150, 105, 0.06);
+            -webkit-text-stroke: 2px rgba(5, 150, 105, 0.5);
+            paint-order: stroke fill;
+            user-select: none;
+            pointer-events: none;
+            z-index: 0;
+            white-space: nowrap;
+            line-height: 1;
+        }
+
+        .stroke-top-right { top: 8%; right: 4%; }
+        .stroke-bottom-left { bottom: 6%; left: 4%; }
+
+        .page > *:not(.stroke-word) { position: relative; z-index: 1; }
+
+        /* 署名行 */
+        .byline {
+            margin-top: 48px;
+            font-size: 18px;
+            color: var(--gray-600);
+        }
+
+        /* 导航 */
+        .nav {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            padding: 24px 4vw;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .nav-logo {
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--black);
+            text-decoration: none;
+        }
+
+        .nav-logo span { color: var(--green); }
+
+        .theme-btn {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: none;
+            border: 1.5px solid var(--gray-200);
+            color: var(--gray-600);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.25s;
+        }
+
+        .theme-btn:hover { border-color: var(--green); color: var(--green); transform: rotate(15deg); }
+
+        .theme-btn .icon-moon { display: none; }
+        [data-theme="dark"] .theme-btn .icon-sun { display: none; }
+        [data-theme="dark"] .theme-btn .icon-moon { display: block; }
+
+        /* ===== 油漆泼洒主题切换动画 ===== */
+        /* View Transition：禁用默认交叉淡入，新视图从点击处圆形扩散 */
+        ::view-transition-old(root),
+        ::view-transition-new(root) {
+            animation: none;
+            mix-blend-mode: normal;
+        }
+        ::view-transition-old(root) { z-index: 1; }
+        ::view-transition-new(root) { z-index: 2147483646; }
+
+        /* 油漆滴：从按钮处下落并晕开的墨点 */
+        .paint-drop {
+            position: fixed;
+            width: 14px;
+            height: 14px;
+            border-radius: 50% 50% 50% 50% / 62% 62% 38% 38%;
+            background: var(--green);
+            pointer-events: none;
+            z-index: 9999;
+            transform: translate(-50%, -50%) scale(1);
+            animation: dropSplash 0.55s cubic-bezier(0.3, 0.7, 0.4, 1) forwards;
+        }
+        @keyframes dropSplash {
+            0%   { transform: translate(-50%, -50%) scale(0.4); opacity: 1; border-radius: 50% 50% 50% 50% / 62% 62% 38% 38%; }
+            55%  { transform: translate(-50%, -50%) scale(1.25); opacity: 1; border-radius: 50%; }
+            100% { transform: translate(-50%, -50%) scale(2.6); opacity: 0; border-radius: 50%; }
+        }
+
+        /* 主题切换期间隔离滚动容器，减少扩散到边缘时的重绘卡顿 */
+        html.theme-animating .scroll-container { overflow: hidden; }
+
+        /* 原理动画容器：居中撑开 */
+        #flow-anim .anim-wrap {
+            flex: 1;
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 0;
+        }
+        #flow-anim { display: flex; flex-direction: column; }
+
+
+        /* ===== FlowClip 原理动画（#flow-anim） ===== */
+
+/* ===== 舞台 ===== */
+    .stage {
+        position: relative;
+        display: flex;
+        align-items: flex-end;
+        gap: clamp(20px, 4.5vw, 60px);
+        padding-top: 90px;
+    }
+
+    .device {
+        position: relative;
+        transition: transform .6s cubic-bezier(.22,1,.36,1), opacity .6s, filter .6s;
+        transform-origin: bottom center;
+    }
+    .device.focus { transform: scale(1.12); z-index: 5; }
+    .device.dim   { opacity: .32; filter: saturate(.4); }
+
+    /* ===== FlowClip 中转枢纽 ===== */
+    .hub {
+        position: absolute;
+        top: -84px; left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 9px 18px;
+        border-radius: 99px;
+        border: 1.5px solid var(--gray-200);
+        background: var(--white);
+        font-size: 14px;
+        font-weight: 700;
+        letter-spacing: -.2px;
+        transition: border-color .4s, box-shadow .4s, transform .4s cubic-bezier(.22,1,.36,1);
+        z-index: 10;
+        white-space: nowrap;
+    }
+    .hub span { color: var(--green); }
+    .hub .pulse {
+        width: 7px; height: 7px;
+        border-radius: 50%;
+        background: var(--gray-400);
+        transition: background .3s;
+    }
+    .hub.active {
+        border-color: var(--green);
+        box-shadow: 0 0 0 5px rgba(5,150,105,.12);
+        transform: translateX(-50%) scale(1.08);
+    }
+    .hub.active .pulse { background: var(--green); animation: blink 1s infinite; }
+    @keyframes blink { 50% { opacity: .3; } }
+
+    /* ===== 电脑 ===== */
+    .pc .monitor {
+        width: 232px; height: 146px;
+        border: 3px solid var(--black);
+        border-radius: 12px;
+        background: var(--gray-100);
+        overflow: hidden;
+        position: relative;
+    }
+    .pc .stand { width: 12px; height: 16px; background: var(--black); margin: 0 auto; }
+    .pc .base  { width: 80px; height: 5px; background: var(--black); border-radius: 99px; margin: 0 auto; }
+
+    /* ===== 平板 ===== */
+    .tablet .frame {
+        width: 116px; height: 152px;
+        border: 3px solid var(--black);
+        border-radius: 14px;
+        background: var(--gray-100);
+        overflow: hidden;
+        position: relative;
+    }
+
+    /* ===== 手机 ===== */
+    .phone .frame {
+        width: 72px; height: 134px;
+        border: 3px solid var(--black);
+        border-radius: 15px;
+        background: var(--gray-100);
+        overflow: hidden;
+        position: relative;
+    }
+    .phone .frame::before {
+        content: '';
+        position: absolute;
+        top: 6px; left: 50%;
+        transform: translateX(-50%);
+        width: 20px; height: 4px;
+        border-radius: 99px;
+        background: var(--black);
+        z-index: 2;
+    }
+
+    /* ===== 屏幕内容 ===== */
+    .screen {
+        position: absolute;
+        inset: 8px;
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-end;
+        gap: 5px;
+        overflow: hidden;
+    }
+    .line {
+        font-size: 8px;
+        line-height: 1;
+        padding: 4px 6px;
+        border-radius: 5px;
+        background: var(--white);
+        border: 1px solid var(--gray-200);
+        color: var(--black);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        opacity: 0;
+        transform: translateY(5px) scale(.92);
+        transition: all .4s cubic-bezier(.22,1,.36,1);
+        max-width: 100%;
+    }
+    .line.show { opacity: 1; transform: translateY(0) scale(1); }
+    .line.selected {
+        border-color: var(--black);
+    }
+    .line.out { opacity: 0; transform: translateY(-5px) scale(.9); }
+
+    /* 图片行 */
+    .line.img { padding: 0; overflow: hidden; height: 42px; }
+    .line.img svg { display: block; width: 100%; height: 100%; }
+
+    /* 文件卡片行 */
+    .line.file {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        padding: 5px 7px;
+    }
+    .line.file .ficon {
+        width: 13px; height: 13px;
+        flex: none;
+        border-radius: 3px;
+        background: var(--green);
+        color: #fff;
+        font-size: 6px;
+        font-weight: 700;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        letter-spacing: 0;
+    }
+    .line.file .fname {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    /* ===== 复制/粘贴 小菜单（触屏） ===== */
+    .menu {
+        position: absolute;
+        z-index: 30;
+        font-size: 8px;
+        font-weight: 500;
+        padding: 4px 9px;
+        border-radius: 99px;
+        background: var(--black);
+        color: var(--white);
+        white-space: nowrap;
+        transform: translate(-50%, -120%) scale(.6);
+        opacity: 0;
+        transition: all .3s cubic-bezier(.34,1.56,.64,1);
+        pointer-events: none;
+    }
+    .menu.show { opacity: 1; transform: translate(-50%, -120%) scale(1); }
+
+    /* ===== 键帽（电脑 Ctrl+C/V） ===== */
+    .keys {
+        position: absolute;
+        z-index: 30;
+        display: flex;
+        gap: 4px;
+        align-items: center;
+        transform: translate(-50%, -130%) scale(.6);
+        opacity: 0;
+        transition: all .3s cubic-bezier(.34,1.56,.64,1);
+        pointer-events: none;
+    }
+    .keys.show { opacity: 1; transform: translate(-50%, -130%) scale(1); }
+    .key {
+        font-size: 8px;
+        font-weight: 700;
+        font-family: inherit;
+        padding: 4px 7px;
+        border-radius: 5px;
+        background: var(--white);
+        color: var(--black);
+        border: 1.5px solid var(--black);
+        border-bottom-width: 3px;
+        white-space: nowrap;
+    }
+    .keys .plus { font-size: 9px; color: var(--gray-600); font-weight: 700; }
+
+    /* ===== 鼠标指针 ===== */
+    .cursor {
+        position: absolute;
+        left: 0; top: 0;
+        width: 13px; height: 13px;
+        z-index: 40;
+        opacity: 0;
+        transition: opacity .25s;
+        pointer-events: none;
+        filter: drop-shadow(0 1px 2px rgba(0,0,0,.3));
+    }
+    .cursor.show { opacity: 1; }
+    .cursor svg { display: block; }
+
+    /* ===== 触摸涟漪 ===== */
+    .ripple {
+        position: absolute;
+        width: 22px; height: 22px;
+        border-radius: 50%;
+        border: 2px solid var(--green);
+        background: rgba(5,150,105,.18);
+        transform: translate(-50%,-50%) scale(.2);
+        opacity: 0;
+        z-index: 40;
+        pointer-events: none;
+    }
+    .ripple.go { animation: rip .5s cubic-bezier(.22,1,.36,1) forwards; }
+    @keyframes rip {
+        0%   { opacity: 1; transform: translate(-50%,-50%) scale(.2); }
+        70%  { opacity: 1; transform: translate(-50%,-50%) scale(1); }
+        100% { opacity: 0; transform: translate(-50%,-50%) scale(1.15); }
+    }
+
+    /* ===== 飞行物 ===== */
+    .fly {
+        position: fixed;
+        z-index: 60;
+        border-radius: 10px;
+        overflow: hidden;
+        pointer-events: none;
+        box-shadow: 0 6px 18px rgba(5,150,105,.35);
+        opacity: 0;
+        background: var(--white);
+        border: 1.5px solid var(--green);
+    }
+    .fly.text {
+        font-size: 10px;
+        padding: 5px 11px;
+        border-radius: 99px;
+        background: var(--white);
+        color: var(--black);
+        white-space: nowrap;
+        max-width: 180px;
+        text-overflow: ellipsis;
+        border: 1.5px solid var(--green);
+        box-shadow: none;
+    }
+    .fly.img { width: 72px; height: 45px; }
+    .fly.img svg { display: block; width: 100%; height: 100%; }
+    .fly.file {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 7px 10px;
+        font-size: 9px;
+        font-weight: 500;
+        color: var(--black);
+        white-space: nowrap;
+    }
+    .fly.file .ficon {
+        width: 16px; height: 16px;
+        flex: none;
+        border-radius: 4px;
+        background: var(--green);
+        color: #fff;
+        font-size: 7px;
+        font-weight: 700;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    @media (max-width: 640px) {
+        .pc .monitor { width: 168px; height: 106px; }
+        .tablet .frame { width: 88px; height: 116px; }
+        .phone .frame { width: 56px; height: 104px; }
+        .line.img { height: 32px; }
+        .stage { gap: 16px; }
+        .hub { font-size: 12px; padding: 7px 14px; }
+    }
+
+        /* 滚动提示 */
+        .scroll-hint {
+            position: absolute;
+            bottom: 40px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 12px;
+            color: var(--gray-400);
+            letter-spacing: 3px;
+            animation: bob 2s infinite;
+        }
+
+        @keyframes bob {
+            0%, 100% { transform: translateX(-50%) translateY(0); }
+            50% { transform: translateX(-50%) translateY(6px); }
+        }
+
+        /* 功能页 */
+        .features-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 56px;
+            margin-top: 72px;
+        }
+
+        .feature-item .num {
+            font-size: 15px;
+            color: var(--green);
+            font-weight: 700;
+            letter-spacing: 2px;
+            margin-bottom: 20px;
+        }
+
+        .feature-item h3 {
+            font-size: 24px;
+            font-weight: 700;
+            margin-bottom: 14px;
+        }
+
+        .feature-item p {
+            font-size: 15px;
+            color: var(--gray-600);
+            line-height: 1.7;
+        }
+
+        /* 截图页 */
+        .shots-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 28px;
+            margin-top: 64px;
+        }
+
+        .shot {
+            background: var(--gray-100);
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        .shot img { width: 100%; display: block; }
+
+        .shot .cap {
+            padding: 14px;
+            font-size: 13px;
+            color: var(--gray-600);
+            text-align: center;
+        }
+
+        /* 步骤页 */
+        .steps-row {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 64px;
+            margin-top: 80px;
+        }
+
+        .step-item .step-num {
+            font-size: 96px;
+            font-weight: 700;
+            line-height: 1;
+            color: transparent;
+            -webkit-text-stroke: 1.5px var(--stroke);
+            margin-bottom: 20px;
+        }
+
+        .step-item h3 {
+            font-size: 22px;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+
+        .step-item p {
+            font-size: 15px;
+            color: var(--gray-600);
+        }
+
+        /* 规格卡片 */
+        .specs-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 24px;
+            margin-top: 72px;
+        }
+        .spec-card {
+            border: 1.5px solid var(--gray-200);
+            border-radius: 16px;
+            padding: 40px 24px;
+            text-align: center;
+            transition: border-color 0.2s;
+        }
+        .spec-card:hover { border-color: var(--green); }
+        .spec-value {
+            font-size: 56px;
+            font-weight: 700;
+            letter-spacing: -2px;
+            color: var(--green);
+            line-height: 1;
+        }
+        .spec-unit {
+            font-size: 20px;
+            font-weight: 500;
+            margin-left: 4px;
+        }
+        .spec-name {
+            margin-top: 16px;
+            font-size: 15px;
+            color: var(--gray-600);
+        }
+        .spec-note {
+            margin-top: 40px;
+            font-size: 13px;
+            color: var(--gray-400);
+        }
+
+        @media (max-width: 768px) {
+            .page { padding: 80px 24px; }
+            .shots-grid { grid-template-columns: repeat(2, 1fr); gap: 16px; }
+            .steps-row { grid-template-columns: 1fr; gap: 40px; margin-top: 48px; }
+            .features-row { gap: 36px; margin-top: 48px; }
+            .stroke-word { font-size: clamp(80px, 22vw, 140px); }
+            .specs-grid { grid-template-columns: repeat(2, 1fr); gap: 16px; margin-top: 48px; }
+            .spec-value { font-size: 40px; }
+        }
+    </style>
+</head>
+<body>
+    <nav class="nav">
+        <a href="#" class="nav-logo">Flow<span>Clip</span></a>
+        <button class="theme-btn" onclick="toggleTheme(event)" aria-label="切换主题">
+            <svg class="icon-sun" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+            <svg class="icon-moon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        </button>
+    </nav>
+
+    <div class="scroll-container">
+        <!-- P1: 封面 -->
+        <section class="page">
+            <div class="stroke-word stroke-top-right">FLOW</div>
+            <div class="stroke-word stroke-bottom-left">CLIP</div>
+            <div class="eyebrow">开源项目<span class="dot">·</span>跨平台工具</div>
+            <h1 class="big-title">把<span class="hl">剪贴板</span><br>装进口袋<br>让文件<span class="hl">自由流动</span></h1>
+            <div class="byline">By 恩恩hhh</div>
+            <div class="scroll-hint">SCROLL</div>
+        </section>
+
+
+        <!-- P1.5: 原理动画 -->
+        <section class="page" id="flow-anim">
+            <div class="stroke-word stroke-top-right">FLOW</div>
+            <div class="eyebrow">工作原理<span class="dot">·</span>How it works</div>
+            <h1 class="big-title">文件，真的在<span class="hl">流动</span></h1>
+            <div class="anim-wrap"><div class="stage">
+    <!-- FlowClip 中转 -->
+    <div class="hub"><div class="pulse"></div>Flow<span>Clip</span></div>
+
+    <!-- 电脑 -->
+    <div class="device pc" data-name="pc">
+        <div class="monitor"><div class="screen"></div></div>
+        <div class="stand"></div>
+        <div class="base"></div>
+        <div class="keys"><div class="key">Ctrl</div><div class="plus">+</div><div class="key k2">C</div></div>
+        <div class="cursor">
+            <svg viewBox="0 0 24 24" fill="#111" stroke="#fff" stroke-width="1.5">
+                <path d="M4 2 L4 19 L9 14.5 L12.5 21.5 L15.5 20 L12 13 L19 13 Z"/>
+            </svg>
+        </div>
+    </div>
+    <!-- 平板 -->
+    <div class="device tablet" data-name="tablet">
+        <div class="frame"><div class="screen"></div></div>
+        <div class="menu">复制</div>
+        <div class="ripple"></div>
+    </div>
+    <!-- 手机 -->
+    <div class="device phone" data-name="phone">
+        <div class="frame"><div class="screen"></div></div>
+        <div class="menu">复制</div>
+        <div class="ripple"></div>
+    </div>
+</div>
+</div>
+        </section>
+
+        <!-- P2: 功能 -->
+        <section class="page">
+            <div class="stroke-word stroke-top-right">SYNC</div>
+            <div class="eyebrow">核心功能<span class="dot">·</span>Features</div>
+            <h1 class="big-title">做好这些<span class="hl">小事</span></h1>
+            <div class="features-row">
+                <div class="feature-item">
+                    <div class="num">01</div>
+                    <h3>剪贴板同步</h3>
+                    <p>复制即同步，手机电脑之间实时共享剪贴板内容</p>
+                </div>
+                <div class="feature-item">
+                    <div class="num">02</div>
+                    <h3>文件快传</h3>
+                    <p>无需数据线，设备间直接传输单个或多个文件</p>
+                </div>
+                <div class="feature-item">
+                    <div class="num">03</div>
+                    <h3>端到端加密</h3>
+                    <p>支持 HTTPS 加密传输，数据完全由你掌控</p>
+                </div>
+                <div class="feature-item">
+                    <div class="num">04</div>
+                    <h3>拖拽传输</h3>
+                    <p>Android 可从厂商"中转站"直接拖入图片、文件快速发送；Windows 支持鼠标拖入</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- P3: 规格卡片 -->
+        <section class="page">
+            <div class="stroke-word stroke-top-right">SPEC</div>
+            <div class="eyebrow">规格<span class="dot">·</span>Specs</div>
+            <h1 class="big-title">小身材，<span class="hl">快速度</span></h1>
+            <div class="specs-grid">
+                <div class="spec-card"><div class="spec-value">13<span class="spec-unit">MB</span></div><div class="spec-name">Windows 端</div></div>
+                <div class="spec-card"><div class="spec-value">89<span class="spec-unit">KB</span></div><div class="spec-name">Android 端</div></div>
+                <div class="spec-card"><div class="spec-value">50<span class="spec-unit">MB/s</span></div><div class="spec-name">局域网传输</div></div>
+                <div class="spec-card"><div class="spec-value">6<span class="spec-unit">MB/s</span></div><div class="spec-name">非局域网传输</div></div>
+            </div>
+            <div class="spec-note">注：传输速度取决于网络环境 · 测试环境：上行 60 Mbps / 下行 500 Mbps</div>
+        </section>
+
+        <!-- P3: 截图 -->
+        <section class="page">
+            <div class="stroke-word stroke-bottom-left">VIEW</div>
+            <div class="eyebrow">界面预览<span class="dot">·</span>Screenshots</div>
+            <h1 class="big-title">简洁，<span class="hl">一眼看懂</span></h1>
+            <div class="shots-grid">
+                <div class="shot">
+                    <img src="screenshots/windows-main.png" alt="Windows 主界面">
+                    <div class="cap">Windows 主界面</div>
+                </div>
+                <div class="shot">
+                    <img src="screenshots/windows-transfer.png" alt="Windows 文件快传">
+                    <div class="cap">Windows 文件快传</div>
+                </div>
+                <div class="shot">
+                    <img src="screenshots/android-transfer.png" alt="Android 文件快传">
+                    <div class="cap">Android 文件快传</div>
+                </div>
+                <div class="shot">
+                    <img src="screenshots/android-settings.png" alt="Android 设置">
+                    <div class="cap">Android 设置</div>
+                </div>
+            </div>
+        </section>
+        <!-- P4: 快速开始 -->
+        <section class="page">
+            <div class="stroke-word stroke-top-right">GO</div>
+            <div class="eyebrow">快速开始<span class="dot">·</span>Getting Started</div>
+            <h1 class="big-title">三步，<span class="hl">上手</span></h1>
+            <div class="steps-row">
+                <div class="step-item">
+                    <div class="step-num">01</div>
+                    <h3>下载安装</h3>
+                    <p>选择对应平台版本</p>
+                </div>
+                <div class="step-item">
+                    <div class="step-num">02</div>
+                    <h3>设置密钥</h3>
+                    <p>所有设备使用相同密钥</p>
+                </div>
+                <div class="step-item">
+                    <div class="step-num">03</div>
+                    <h3>开始使用</h3>
+                    <p>启动服务即可同步</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- P5: 下载 -->
+        <section class="page">
+            <div class="stroke-word stroke-bottom-left">TINY</div>
+            <div class="eyebrow">下载<span class="dot">·</span>Download</div>
+            <h1 class="big-title">小而美<br><span class="hl">13 MB</span> 与 <span class="hl">89 KB</span></h1>
+            <div class="byline">Windows 安装包仅 13 MB · Android APK 仅 89 KB · 免费开源</div>
+            <div style="margin-top:56px">
+                <a href="https://github.com/enenhhh/flowclip/releases/tag/v1.4.0" target="_blank" style="display:inline-block;background:var(--black);color:var(--white);padding:18px 56px;border-radius:100px;font-size:17px;font-weight:500;text-decoration:none;">前往下载 →</a>
+            </div>
+        </section>
+
+        <!-- P6: Footer -->
+        <section class="page" style="background:var(--gray-100)">
+            <div class="stroke-word stroke-top-right">END</div>
+            <div class="eyebrow">关于<span class="dot">·</span>About</div>
+            <h1 class="big-title" style="font-size:clamp(36px,5vw,64px)">由 <span class="hl">恩恩hhh</span> 开发</h1>
+            <div class="byline">与其他任何名为 "Flow Clip" 的产品无关<br>FlowClip 使用 MIT License 开源</div>
+            <div style="margin-top:56px;display:flex;gap:36px;flex-wrap:wrap">
+                <a href="https://github.com/enenhhh/flowclip" target="_blank" style="font-size:15px;color:var(--gray-600);text-decoration:none">GitHub →</a>
+                <a href="https://github.com/enenhhh/flowclip/releases" target="_blank" style="font-size:15px;color:var(--gray-600);text-decoration:none">下载 →</a>
+                <a href="https://github.com/enenhhh/flowclip/issues" target="_blank" style="font-size:15px;color:var(--gray-600);text-decoration:none">问题反馈 →</a>
+            </div>
+        </section>
+    </div>
+
+    <script>
+        const root = document.documentElement;
+        const darkQuery = window.matchMedia('(prefers-color-scheme: dark)');
+
+        function applyTheme(theme) {
+            if (theme === 'dark') root.setAttribute('data-theme', 'dark');
+            else root.removeAttribute('data-theme');
+        }
+
+        /* 生成一颗从点击处晕开的油漆滴 */
+        function spawnDrop(x, y) {
+            const d = document.createElement('div');
+            d.className = 'paint-drop';
+            d.style.left = x + 'px';
+            d.style.top = y + 'px';
+            document.body.appendChild(d);
+            d.addEventListener('animationend', () => d.remove());
+        }
+
+        // 手动切换：油漆泼洒动画 + 存 localStorage 覆盖系统
+        function toggleTheme(event) {
+            const isDark = root.getAttribute('data-theme') === 'dark';
+            const next = isDark ? 'light' : 'dark';
+            localStorage.setItem('theme', next);
+
+            // 点击坐标（回退到屏幕中心）
+            const x = (event && event.clientX) || window.innerWidth / 2;
+            const y = (event && event.clientY) || window.innerHeight / 2;
+
+            // 油漆滴晕开
+            spawnDrop(x, y);
+
+            // 不支持 View Transitions 时直接切换
+            if (!document.startViewTransition) {
+                applyTheme(next);
+                return;
+            }
+
+            const transition = document.startViewTransition(() => applyTheme(next));
+
+            transition.ready.then(() => {
+                // 以点击处为圆心，扩散半径取到屏幕最远角的距离
+                const maxRadius = Math.hypot(
+                    Math.max(x, window.innerWidth - x),
+                    Math.max(y, window.innerHeight - y)
+                );
+                const clip = [
+                    `circle(0px at ${x}px ${y}px)`,
+                    `circle(${maxRadius}px at ${x}px ${y}px)`
+                ];
+                // 隔离滚动容器，避免扩散到边缘时描边大字触发重绘卡顿
+                root.classList.add('theme-animating');
+                const anim = root.animate(
+                    { clipPath: clip },
+                    {
+                        duration: 650,
+                        easing: 'ease-in-out',
+                        pseudoElement: '::view-transition-new(root)'
+                    }
+                );
+                anim.finished.finally(() => root.classList.remove('theme-animating'));
+            }).catch(() => {});
+        }
+
+        // 初始化：优先用户手动设置，否则跟随系统
+        const saved = localStorage.getItem('theme');
+        applyTheme(saved || (darkQuery.matches ? 'dark' : 'light'));
+
+        // 监听系统主题变化（仅当用户未手动设置时跟随）
+        darkQuery.addEventListener('change', (e) => {
+            if (!localStorage.getItem('theme')) {
+                applyTheme(e.matches ? 'dark' : 'light');
+            }
+        });
+    </script>
+
+    <script>
+
+(function () {
+    // ===== 内容库：文字 / 图片 / 文件 =====
+    const LIB = [
+        { type: 'text', content: '把剪贴板装进口袋' },
+        { type: 'text', content: 'Hello, FlowClip!' },
+        { type: 'text', content: '复制即同步' },
+        { type: 'text', content: 'flowclip.github.io' },
+        { type: 'text', content: 'const sync = true;' },
+        { type: 'text', content: '端到端加密已开启' },
+        { type: 'text', content: 'git push origin main' },
+        { type: 'image' },
+        { type: 'file', name: 'python3.11.zip', ext: 'ZIP' },
+        { type: 'file', name: '设计稿-终版.fig', ext: 'FIG' },
+        { type: 'file', name: 'FlowClip-v1.4.apk', ext: 'APK' }
+    ];
+
+    // 极简图片：灰山 + 太阳
+    const IMG_SVG = `<svg viewBox="0 0 64 40" preserveAspectRatio="xMidYMid slice">
+        <rect width="64" height="40" fill="#EDEDED"/>
+        <circle cx="46" cy="11" r="5" fill="#BFBFBF"/>
+        <path d="M0 40 L18 16 L32 40 Z" fill="#C4C4C4"/>
+        <path d="M20 40 L40 10 L64 40 Z" fill="#9E9E9E"/>
+    </svg>`;
+
+    const devices = [...document.querySelectorAll('#flow-anim .device')];
+    const hub = document.querySelector('#flow-anim .hub');
+
+    const rand = arr => arr[Math.floor(Math.random() * arr.length)];
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+
+    function pickPair() {
+        const a = rand(devices);
+        let b;
+        do { b = rand(devices); } while (b === a);
+        return [a, b];
+    }
+
+    // 渲染一行内容（text / image / file）
+    function fillLine(line, item) {
+        if (item.type === 'image') {
+            line.classList.add('img');
+            line.innerHTML = IMG_SVG;
+        } else if (item.type === 'file') {
+            line.classList.add('file');
+            line.innerHTML = `<div class="ficon">${item.ext}</div><div class="fname">${item.name}</div>`;
+        } else {
+            line.textContent = item.content;
+        }
+    }
+
+    function addLine(dev, item, pasted) {
+        const screen = dev.querySelector('.screen');
+        const line = document.createElement('div');
+        line.className = 'line' + (pasted ? ' pasted' : '');
+        fillLine(line, item);
+        screen.appendChild(line);
+        const lines = [...screen.children];
+        if (lines.length > 3) {
+            const first = lines[0];
+            first.classList.add('out');
+            setTimeout(() => first.remove(), 400);
+        }
+        requestAnimationFrame(() => requestAnimationFrame(() => line.classList.add('show')));
+        return line;
+    }
+
+    function relPos(dev, el) {
+        const dr = dev.getBoundingClientRect();
+        const er = el.getBoundingClientRect();
+        return { x: er.left - dr.left + er.width / 2, y: er.top - dr.top + er.height / 2 };
+    }
+
+    function moveCursor(dev, fx, fy, tx, ty, dur) {
+        const c = dev.querySelector('.cursor');
+        c.style.transition = `left ${dur}ms cubic-bezier(.45,0,.25,1), top ${dur}ms cubic-bezier(.45,0,.25,1), opacity .25s`;
+        c.style.left = fx + 'px'; c.style.top = fy + 'px';
+        c.classList.add('show');
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+            c.style.left = tx + 'px'; c.style.top = ty + 'px';
+        }));
+        return wait(dur);
+    }
+
+    function tapRipple(dev, x, y) {
+        const r = dev.querySelector('.ripple');
+        r.classList.remove('go');
+        r.style.left = x + 'px'; r.style.top = y + 'px';
+        void r.offsetWidth;
+        r.classList.add('go');
+        return wait(420);
+    }
+
+    function showHint(dev, label, x, y, isKey) {
+        const el = dev.querySelector(isKey ? '.keys' : '.menu');
+        if (isKey) el.querySelector('.k2').textContent = label;
+        else el.textContent = label;
+        el.style.left = x + 'px'; el.style.top = y + 'px';
+        el.classList.add('show');
+    }
+    function hideHint(dev, isKey) {
+        dev.querySelector(isKey ? '.keys' : '.menu').classList.remove('show');
+    }
+
+    // 飞行物（文字气泡 / 图片缩略 / 文件卡片）
+    // dir: 'toHub' 复制时 源设备 → FlowClip；'fromHub' 粘贴时 FlowClip → 目标设备
+    function flyItem(item, fromEl, toEl, dir) {
+        return new Promise(resolve => {
+            const a = fromEl.getBoundingClientRect();
+            const b = toEl.getBoundingClientRect();
+            const h = hub.getBoundingClientRect();
+            const fly = document.createElement('div');
+            fly.className = 'fly ' + item.type;
+            if (item.type === 'image') fly.innerHTML = IMG_SVG;
+            else if (item.type === 'file') fly.innerHTML = `<div class="ficon">${item.ext}</div>${item.name}`;
+            else fly.textContent = item.content;
+            document.body.appendChild(fly);
+
+            const hubPt = { x: h.left + h.width / 2, y: h.top + h.height / 2 };
+            const p0 = dir === 'toHub'
+                ? { x: a.left + a.width / 2, y: a.top + a.height / 2 }
+                : hubPt;
+            const p1 = dir === 'toHub'
+                ? hubPt
+                : { x: b.left + b.width / 2, y: b.top + b.height / 2 };
+
+            const dur = 620;
+            fly.style.opacity = '1';
+            hub.classList.add('active');
+            setTimeout(() => hub.classList.remove('active'), dur + 400);
+
+            const mx = (p0.x + p1.x) / 2 + (dir === 'toHub' ? 30 : -30);
+            const my = Math.min(p0.y, p1.y) - 46;
+            function frame(t) {
+                if (!frame.t0) frame.t0 = t;
+                const p = Math.min((t - frame.t0) / dur, 1);
+                const e = p < .5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2;
+                const x = (1 - e) * (1 - e) * p0.x + 2 * (1 - e) * e * mx + e * e * p1.x;
+                const y = (1 - e) * (1 - e) * p0.y + 2 * (1 - e) * e * my + e * e * p1.y;
+                const s = p < .2 ? .4 + p * 4 : (p > .85 ? 1.2 - (p - .85) * 4 : 1.2);
+                fly.style.left = x + 'px';
+                fly.style.top = y + 'px';
+                fly.style.transform = `translate(-50%,-50%) scale(${Math.max(s, .1)})`;
+                if (p < 1) requestAnimationFrame(frame);
+                else { fly.remove(); resolve(); }
+            }
+            requestAnimationFrame(frame);
+        });
+    }
+
+    function focus(d) {
+        devices.forEach(x => {
+            x.classList.remove('focus', 'dim');
+            x.classList.add(x === d ? 'focus' : 'dim');
+        });
+    }
+    function unfocus() { devices.forEach(x => x.classList.remove('focus', 'dim')); }
+
+    // 源设备：出现内容 → 复制 → 内容飞到 FlowClip
+    async function doCopy(dev, item) {
+        const isPC = dev.dataset.name === 'pc';
+        focus(dev);
+        await wait(600);
+
+        const line = addLine(dev, item);
+        await wait(500);
+        const pos = relPos(dev, line);
+
+        if (isPC) {
+            await moveCursor(dev, dev.offsetWidth * .8, 20, pos.x, pos.y, 600);
+            line.classList.add('selected');
+            await wait(220);
+            showHint(dev, 'C', pos.x, pos.y - 10, true);
+            await wait(500);
+        } else {
+            line.classList.add('selected');
+            await tapRipple(dev, pos.x, pos.y);
+            showHint(dev, '复制', pos.x, pos.y - 6, false);
+            await wait(550);
+            await tapRipple(dev, pos.x, pos.y - 26);
+        }
+
+        // 复制触发：内容飞向 FlowClip
+        await flyItem(item, line, hub, 'toHub');
+        hideHint(dev, isPC);
+        if (isPC) dev.querySelector('.cursor').classList.remove('show');
+        await wait(250);
+        return line;
+    }
+
+    // 目标设备：触发粘贴 → 内容从 FlowClip 飞来 → 落屏
+    async function doPaste(dev, item) {
+        const isPC = dev.dataset.name === 'pc';
+        focus(dev);
+        await wait(400);
+
+        const screen = dev.querySelector('.screen');
+        const sr = screen.getBoundingClientRect();
+        const dr = dev.getBoundingClientRect();
+        const tx = sr.left - dr.left + sr.width / 2;
+        const ty = sr.top - dr.top + sr.height - 14;
+
+        // 1. 先做出"粘贴"动作
+        if (isPC) {
+            await moveCursor(dev, dev.offsetWidth * .85, 20, tx, ty, 550);
+            showHint(dev, 'V', tx, ty - 12, true);
+            await wait(500);
+        } else {
+            await tapRipple(dev, tx, ty);
+            showHint(dev, '粘贴', tx, ty - 8, false);
+            await wait(420);
+            await tapRipple(dev, tx, ty - 28);
+        }
+
+        // 2. 粘贴触发：内容从 FlowClip 飞来
+        await flyItem(item, hub, screen, 'fromHub');
+
+        // 3. 收起提示，内容落屏
+        hideHint(dev, isPC);
+        if (isPC) dev.querySelector('.cursor').classList.remove('show');
+        addLine(dev, item, true);
+        await wait(900);
+    }
+
+    async function cycle() {
+        const [src, dst] = pickPair();
+        const item = rand(LIB);
+
+        // 1. 源设备复制 → 飞向 FlowClip
+        await doCopy(src, item);
+
+        // 2. 目标设备点粘贴 → 从 FlowClip 飞来 → 落屏
+        await doPaste(dst, item);
+
+        // 3. 复位
+        unfocus();
+        await wait(1300);
+        cycle();
+    }
+
+    addLine(devices[0], rand(LIB));
+    setTimeout(cycle, 1200);
+})();
+
+    </script>
+</body>
+</html>
