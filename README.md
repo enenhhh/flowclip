@@ -1,5 +1,9 @@
 # FlowClip
 
+> **由 [恩恩hhh (enenhhh)](https://github.com/enenhhh) 开发**，与其他任何名为 "Flow Clip" 的产品无关。
+>
+> **小而美**：Windows 端安装包仅约 13 MB（exe 13.1 MB / zip 13.0 MB），Android APK 仅约 89 KB。
+
 一个在手机、电脑之间同步剪贴板、传输文件的免费开源工具。
 
 ## 它能做什么？
