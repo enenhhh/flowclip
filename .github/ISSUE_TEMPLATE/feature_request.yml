@@ -1,0 +1,55 @@
+name: Feature request
+description: 提议新的功能或平台改进
+title: "[Feature] "
+labels:
+  - enhancement
+  - triage
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 要解决的问题
+      description: 请描述实际使用场景和当前限制，而不只是预设实现方式。
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 建议方案
+      description: 说明交互、平台范围和预期结果。
+    validations:
+      required: true
+  - type: dropdown
+    id: platforms
+    attributes:
+      label: 涉及平台
+      multiple: true
+      options:
+        - Windows
+        - Linux
+        - macOS
+        - Android
+        - 同步协议/服务器
+        - GitHub 发布与构建
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 已考虑的替代方案
+  - type: textarea
+    id: security
+    attributes:
+      label: 安全、隐私与兼容性影响
+      description: 是否改变联网、权限、后台运行、数据格式或旧客户端行为？
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已搜索现有 Issue，未发现相同建议。
+          required: true
+        - label: 我理解功能建议不代表维护者已经承诺实现。
+          required: true

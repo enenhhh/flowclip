@@ -1,0 +1,442 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate-tag:
+    name: Validate release tag
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+
+      - name: Require a stable semantic version tag
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" != "tag" ]]; then
+            echo "Release workflow must run from a tag" >&2
+            exit 1
+          fi
+
+      - name: Require the release commit on the default branch
+        shell: bash
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if [[ -z "${DEFAULT_BRANCH}" ]]; then
+            echo "Repository default branch is unavailable" >&2
+            exit 1
+          fi
+          git fetch --no-tags origin \
+            "+refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}"
+          if ! git merge-base --is-ancestor \
+            "${GITHUB_SHA}" "refs/remotes/origin/${DEFAULT_BRANCH}"; then
+            echo "Release tag must point to a commit on ${DEFAULT_BRANCH}" >&2
+            exit 1
+          fi
+          if [[ ! "${GITHUB_REF_NAME}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "Stable Release tags must look exactly like v1.2.3" >&2
+            exit 1
+          fi
+
+      - name: Match source versions to the tag
+        shell: python
+        run: |
+          import os
+          import pathlib
+          import re
+
+          expected = os.environ["GITHUB_REF_NAME"].removeprefix("v")
+          string_versions = {
+              "desktop": ("desktop/src/flowclip/__init__.py", r'__version__\s*=\s*"([^"]+)"'),
+              "Windows FileVersion": ("desktop/assets/version_info.txt", r"FileVersion',\s*u'([^']+)'"),
+              "Windows ProductVersion": ("desktop/assets/version_info.txt", r"ProductVersion',\s*u'([^']+)'"),
+              "Android": ("android/app/build.gradle", r'versionName\s+"([^"]+)"'),
+          }
+          for name, (filename, pattern) in string_versions.items():
+              text = pathlib.Path(filename).read_text(encoding="utf-8")
+              match = re.search(pattern, text)
+              if match is None or match.group(1) != expected:
+                  actual = match.group(1) if match else "missing"
+                  raise SystemExit(f"{name} version is {actual}; expected {expected}")
+
+          expected_numeric = tuple(map(int, expected.split("."))) + (0,)
+          resource = pathlib.Path("desktop/assets/version_info.txt").read_text(encoding="utf-8")
+          for name in ("filevers", "prodvers"):
+              match = re.search(
+                  rf"{name}=\((\d+),\s*(\d+),\s*(\d+),\s*(\d+)\)",
+                  resource,
+              )
+              actual = tuple(map(int, match.groups())) if match else None
+              if actual != expected_numeric:
+                  raise SystemExit(f"Windows {name} is {actual}; expected {expected_numeric}")
+
+  windows:
+    name: Build Windows x86_64
+    needs: validate-tag
+    runs-on: windows-2022
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            desktop/requirements.in
+            desktop/requirements-build.in
+            desktop/requirements.txt
+            desktop/requirements-build.txt
+
+      - name: Install build dependencies
+        run: 'python -m pip install --require-hashes --only-binary=:all: -r desktop/requirements-build.txt'
+
+      - name: Check desktop dependency consistency
+        run: python -m pip check
+
+      - name: Run unit tests
+        run: python -m unittest discover -s desktop/tests -p "test_*.py"
+
+      - name: Build native application
+        run: python desktop/build.py
+
+      - name: Smoke-test packaged imports
+        shell: pwsh
+        run: |
+          $process = Start-Process -FilePath "dist/FlowClip.exe" -ArgumentList "--package-smoke" -PassThru -Wait
+          if ($process.ExitCode -ne 0) {
+            throw "Packaged FlowClip import smoke failed with exit code $($process.ExitCode)"
+          }
+
+      - name: Run Windows product smoke
+        env:
+          FLOWCLIP_SMOKE_CACHE: ${{ runner.temp }}
+        run: python desktop/tests/product_smoke.py
+
+      - name: Stage Windows release
+        shell: pwsh
+        run: |
+          if (!(Test-Path -LiteralPath "dist/FlowClip.exe" -PathType Leaf)) {
+            throw "desktop/build.py did not produce dist/FlowClip.exe"
+          }
+          New-Item -ItemType Directory -Force -Path release,package/FlowClip | Out-Null
+          Copy-Item -LiteralPath "dist/FlowClip.exe" -Destination "release/FlowClip-${{ github.ref_name }}-windows-x86_64.exe"
+          Copy-Item -LiteralPath "dist/FlowClip.exe" -Destination "package/FlowClip/FlowClip.exe"
+          Copy-Item -LiteralPath "LICENSE" -Destination "package/FlowClip/LICENSE.txt"
+          Copy-Item -LiteralPath "THIRD_PARTY_NOTICES.md" -Destination "package/FlowClip/THIRD_PARTY_NOTICES.md"
+          Copy-Item -LiteralPath "THIRD_PARTY_LICENSES" -Destination "package/FlowClip/THIRD_PARTY_LICENSES" -Recurse
+          Compress-Archive -Path "package/FlowClip" -DestinationPath "release/FlowClip-${{ github.ref_name }}-windows-x86_64.zip"
+
+      - name: Upload Windows package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-windows
+          path: release/*
+          if-no-files-found: error
+          retention-days: 7
+
+  linux:
+    name: Build Linux x86_64
+    needs: validate-tag
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            desktop/requirements.in
+            desktop/requirements-build.in
+            desktop/requirements.txt
+            desktop/requirements-build.txt
+
+      - name: Install build dependencies
+        run: 'python -m pip install --require-hashes --only-binary=:all: -r desktop/requirements-build.txt'
+
+      - name: Check desktop dependency consistency
+        run: python -m pip check
+
+      - name: Run unit tests
+        run: python -m unittest discover -s desktop/tests -p "test_*.py"
+
+      - name: Build native application
+        run: python desktop/build.py
+
+      - name: Smoke-test packaged imports
+        run: dist/FlowClip --package-smoke
+
+      - name: Stage Linux release
+        shell: bash
+        run: |
+          test -f dist/FlowClip
+          mkdir -p package/FlowClip release
+          install -m 0755 dist/FlowClip package/FlowClip/FlowClip
+          cp LICENSE package/FlowClip/LICENSE
+          cp THIRD_PARTY_NOTICES.md package/FlowClip/THIRD_PARTY_NOTICES.md
+          cp -R THIRD_PARTY_LICENSES package/FlowClip/THIRD_PARTY_LICENSES
+          tar -C package -czf "release/FlowClip-${GITHUB_REF_NAME}-linux-x86_64.tar.gz" FlowClip
+
+      - name: Upload Linux package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-linux
+          path: release/*
+          if-no-files-found: error
+          retention-days: 7
+
+  macos:
+    name: Build macOS
+    needs: validate-tag
+    runs-on: macos-14
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            desktop/requirements.in
+            desktop/requirements-build.in
+            desktop/requirements.txt
+            desktop/requirements-build.txt
+
+      - name: Install build dependencies
+        run: 'python -m pip install --require-hashes --only-binary=:all: -r desktop/requirements-build.txt'
+
+      - name: Check desktop dependency consistency
+        run: python -m pip check
+
+      - name: Run unit tests
+        run: python -m unittest discover -s desktop/tests -p "test_*.py"
+
+      - name: Build native application
+        run: python desktop/build.py
+
+      - name: Smoke-test packaged imports
+        run: dist/FlowClip.app/Contents/MacOS/FlowClip --package-smoke
+
+      - name: Stage macOS release
+        shell: bash
+        run: |
+          test -d dist/FlowClip.app
+          EXPECTED_VERSION="${GITHUB_REF_NAME#v}"
+          SHORT_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' dist/FlowClip.app/Contents/Info.plist)"
+          BUNDLE_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' dist/FlowClip.app/Contents/Info.plist)"
+          test "${SHORT_VERSION}" = "${EXPECTED_VERSION}"
+          test "${BUNDLE_VERSION}" = "${EXPECTED_VERSION}"
+          ARCH="$(uname -m)"
+          mkdir -p package/FlowClip release
+          cp -R dist/FlowClip.app package/FlowClip/FlowClip.app
+          cp LICENSE package/FlowClip/LICENSE.txt
+          cp THIRD_PARTY_NOTICES.md package/FlowClip/THIRD_PARTY_NOTICES.md
+          cp -R THIRD_PARTY_LICENSES package/FlowClip/THIRD_PARTY_LICENSES
+          ditto -c -k --sequesterRsrc --keepParent package/FlowClip "release/FlowClip-${GITHUB_REF_NAME}-macos-${ARCH}.zip"
+          hdiutil create -volname FlowClip -srcfolder package/FlowClip -ov -format UDZO "release/FlowClip-${GITHUB_REF_NAME}-macos-${ARCH}.dmg"
+
+      - name: Upload macOS packages
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-macos
+          path: release/*
+          if-no-files-found: error
+          retention-days: 7
+
+  android-project:
+    name: Validate and archive Android project
+    needs: validate-tag
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up Java
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4.4.3
+
+      - name: Install required Android SDK packages
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Validate unsigned Android release
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon testDebugUnitTest lintDebug assembleRelease
+
+      - name: Archive Gradle project
+        shell: bash
+        run: |
+          mkdir -p package/FlowClip-android release
+          git archive --format=tar HEAD:android | tar -xf - -C package/FlowClip-android
+          cp LICENSE package/FlowClip-android/LICENSE.txt
+          cp THIRD_PARTY_NOTICES.md package/FlowClip-android/THIRD_PARTY_NOTICES.md
+          cp -R THIRD_PARTY_LICENSES package/FlowClip-android/THIRD_PARTY_LICENSES
+          cd package
+          zip -q -r "../release/FlowClip-${GITHUB_REF_NAME}-android-gradle-project.zip" FlowClip-android
+
+      - name: Upload Android project
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-android-project
+          path: release/*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub Release
+    needs:
+      - windows
+      - linux
+      - macos
+      - android-project
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    outputs:
+      draft_id: ${{ steps.create-draft.outputs.draft_id }}
+    steps:
+      - name: Check out source metadata
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+
+      - name: Download release packages
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: release-*
+          path: release
+          merge-multiple: true
+
+      - name: Generate SHA-256 checksums
+        shell: bash
+        run: |
+          cp LICENSE release/LICENSE.txt
+          cp THIRD_PARTY_NOTICES.md release/THIRD_PARTY_NOTICES.md
+          zip -q -r "release/FlowClip-${GITHUB_REF_NAME}-third-party-licenses.zip" THIRD_PARTY_LICENSES
+          cd release
+          find . -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum | sed 's#  \./#  #' > SHA256SUMS
+
+      - name: Attest release packages
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: release/*
+
+      - name: Reject an existing release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            echo "Release ${GITHUB_REF_NAME} already exists; this workflow will not overwrite it" >&2
+            exit 1
+          fi
+          if [[ "$(git rev-list -n 1 "${GITHUB_REF_NAME}")" != "${GITHUB_SHA}" ]]; then
+            echo "Checked-out tag does not resolve to GITHUB_SHA" >&2
+            exit 1
+          fi
+
+      - name: Create owned draft release
+        id: create-draft
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          marker="<!-- flowclip-draft-owner:${GITHUB_REPOSITORY}:${GITHUB_RUN_ID} -->"
+          response="$(gh api --method POST "repos/${GH_REPO}/releases" \
+            -f tag_name="${GITHUB_REF_NAME}" \
+            -f name="FlowClip ${GITHUB_REF_NAME}" \
+            -f body="${marker}" \
+            -F draft=true \
+            -F generate_release_notes=true)"
+          draft_id="$(jq -er '.id | numbers' <<<"${response}")"
+          echo "draft_id=${draft_id}" >> "${GITHUB_OUTPUT}"
+
+      - name: Upload release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release upload "${GITHUB_REF_NAME}" release/*
+
+      - name: Publish the completed release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          DRAFT_ID: ${{ steps.create-draft.outputs.draft_id }}
+        run: |
+          gh api --method PATCH "repos/${GH_REPO}/releases/${DRAFT_ID}" \
+            -F draft=false >/dev/null
+
+  cleanup-draft:
+    name: Clean up an incomplete draft
+    needs: publish
+    if: ${{ always() && needs.publish.result != 'success' }}
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: Delete only this run's draft
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          DRAFT_ID: ${{ needs.publish.outputs.draft_id }}
+        run: |
+          marker="<!-- flowclip-draft-owner:${GITHUB_REPOSITORY}:${GITHUB_RUN_ID} -->"
+          if [[ -n "${DRAFT_ID}" ]]; then
+            if ! release_json="$(gh api "repos/${GH_REPO}/releases/${DRAFT_ID}" 2>/dev/null)"; then
+              echo "Draft ${DRAFT_ID} is already absent; nothing to clean"
+              exit 0
+            fi
+          else
+            if ! release_json="$(gh api "repos/${GH_REPO}/releases/tags/${GITHUB_REF_NAME}" 2>/dev/null)"; then
+              echo "No release exists for ${GITHUB_REF_NAME}; nothing to clean"
+              exit 0
+            fi
+            DRAFT_ID="$(jq -er '.id | numbers' <<<"${release_json}")"
+          fi
+
+          actual_id="$(jq -r '.id // empty' <<<"${release_json}")"
+          actual_tag="$(jq -r '.tag_name // empty' <<<"${release_json}")"
+          is_draft="$(jq -r '.draft // false' <<<"${release_json}")"
+          body="$(jq -r '.body // ""' <<<"${release_json}")"
+          if [[ "${actual_id}" != "${DRAFT_ID}" \
+                || "${actual_tag}" != "${GITHUB_REF_NAME}" \
+                || "${is_draft}" != "true" \
+                || "${body}" != *"${marker}"* ]]; then
+            echo "Release ownership or state does not match this run; preserving it"
+            exit 0
+          fi
+          gh api --method DELETE "repos/${GH_REPO}/releases/${DRAFT_ID}"

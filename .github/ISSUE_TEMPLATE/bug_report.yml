@@ -1,0 +1,87 @@
+name: Bug report
+description: 报告可复现的功能、兼容性或稳定性问题
+title: "[Bug] "
+labels:
+  - bug
+  - triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈。安全漏洞请不要填写此公开表单，请按 SECURITY.md 使用 GitHub Private Vulnerability Reporting。
+  - type: input
+    id: version
+    attributes:
+      label: FlowClip 版本
+      description: 请填写版本号、Release 标签或 commit。
+      placeholder: v1.2.3
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: 平台
+      options:
+        - Windows
+        - Linux (X11)
+        - Linux (Wayland)
+        - macOS (Intel)
+        - macOS (Apple Silicon)
+        - Android
+        - 多个平台
+    validations:
+      required: true
+  - type: input
+    id: os-version
+    attributes:
+      label: 操作系统版本
+      placeholder: Windows 11 24H2 / Ubuntu 24.04 / macOS 15 / Android 15
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 网络与运行环境
+      description: 请说明服务器所在平台、客户端平台、局域网/VPN/HTTPS 隧道及桌面会话类型。不要填写共享密钥或公网凭据。
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 请提供可以稳定复现问题的最小步骤。
+      placeholder: |
+        1. 启动...
+        2. 配置...
+        3. 复制...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期行为
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志或截图
+      description: 可选。上传前请移除共享密钥、服务器公网地址、用户名和其他敏感信息。
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已搜索现有 Issue，未发现相同问题。
+          required: true
+        - label: 此报告不包含共享密钥、签名材料或其他敏感信息。
+          required: true
+        - label: 这不是尚未修复的安全漏洞。
+          required: true

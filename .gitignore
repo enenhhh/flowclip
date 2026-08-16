@@ -1,0 +1,48 @@
+# Python environments, caches, and reports
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+*.egg-info/
+
+# Desktop and packaging output
+.build/
+build/
+dist/
+*.AppImage
+*.dmg
+*.app/
+
+# Android machine state, build output, and signing material
+android/.gradle/
+android/local.properties
+android/**/build/
+*.jks
+*.keystore
+*.p12
+keystore.properties
+
+# Local configuration and logs
+.env
+.env.*
+!.env.example
+*.log
+
+# Editors and operating systems
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+._*
+Thumbs.db
+Desktop.ini

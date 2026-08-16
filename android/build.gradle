@@ -1,0 +1,11 @@
+plugins {
+    id "com.android.application" version "8.7.3" apply false
+}
+
+def externalBuildRoot = providers.gradleProperty("flowclipBuildDir").orNull
+if (externalBuildRoot != null && !externalBuildRoot.trim().isEmpty()) {
+    layout.buildDirectory.set(file("${externalBuildRoot}/root"))
+    subprojects {
+        layout.buildDirectory.set(file("${externalBuildRoot}/${project.name}"))
+    }
+}
